@@ -42,13 +42,17 @@ user = Client("user_session", workers=1000, session_string=PyroConf.SESSION_STRI
 
 RUNNING_TASKS = set()
 
+
 def track_task(coro):
     task = asyncio.create_task(coro)
     RUNNING_TASKS.add(task)
+
     def _remove(_):
         RUNNING_TASKS.discard(task)
+
     task.add_done_callback(_remove)
     return task
+
 
 @bot.on_message(filters.command("start") & filters.private)
 async def start(_, message: Message):
@@ -65,7 +69,10 @@ async def start(_, message: Message):
     markup = InlineKeyboardMarkup(
         [[InlineKeyboardButton("Update Channel", url="https://t.me/itsSmartDev")]]
     )
-    await message.reply(welcome_text, reply_markup=markup, disable_web_page_preview=True)
+    await message.reply(
+        welcome_text, reply_markup=markup, disable_web_page_preview=True
+    )
+
 
 @bot.on_message(filters.command("help") & filters.private)
 async def help_command(_, message: Message):
@@ -73,6 +80,10 @@ async def help_command(_, message: Message):
         "💡 **Media Downloader Bot Help**\n\n"
         "➤ **Download Media**\n"
         "   – Send `/dl <post_URL>` **or** just paste a Telegram post link to fetch photos, videos, audio, or documents.\n\n"
+        "➤ **Download from a Topic**\n"
+        "   – Send `/dltopic <topic_link>` to download all media from a specific topic in a group.\n\n"
+        "➤ **Download a Range of Posts**\n"
+        "   – Send `/dlrange <start_link> <end_link>` to download all media from a range of posts in a channel.\n\n"
         "➤ **Requirements**\n"
         "   – Make sure the user client is part of the chat.\n\n"
         "➤ **If the bot hangs**\n"
@@ -85,7 +96,7 @@ async def help_command(_, message: Message):
         "  • `/dl https://t.me/itsSmartDev/547`\n"
         "  • `https://t.me/itsSmartDev/547`"
     )
-    
+
     markup = InlineKeyboardMarkup(
         [[InlineKeyboardButton("Update Channel", url="https://t.me/itsSmartDev")]]
     )
@@ -93,12 +104,11 @@ async def help_command(_, message: Message):
 
 
 async def handle_download(bot: Client, message: Message, post_url: str):
-    # Cut off URL at '?' if present
     if "?" in post_url:
         post_url = post_url.split("?", 1)[0]
 
     try:
-        chat_id, message_id = getChatMsgID(post_url)
+        chat_id, message_id, _ = getChatMsgID(post_url)
         chat_message = await user.get_messages(chat_id=chat_id, message_ids=message_id)
 
         LOGGER(__name__).info(f"Downloading media from URL: {post_url}")
@@ -188,17 +198,20 @@ async def download_media(bot: Client, message: Message):
     post_url = message.command[1]
     await track_task(handle_download(bot, message, post_url))
 
+
 @bot.on_message(filters.command("dlrange") & filters.private)
 async def download_range(bot: Client, message: Message):
     args = message.text.split()
 
     if len(args) != 3 or not all(arg.startswith("https://t.me/") for arg in args[1:]):
-        await message.reply("❌ Usage:\n`/dlrange <start_link> <end_link>`\n\nExample:\n`/dlrange https://t.me/mychannel/100 https://t.me/mychannel/120`")
+        await message.reply(
+            "❌ Usage:\n`/dlrange <start_link> <end_link>`\n\nExample:\n`/dlrange https://t.me/mychannel/100 https://t.me/mychannel/120`"
+        )
         return
 
     try:
-        start_chat, start_id = getChatMsgID(args[1])
-        end_chat, end_id = getChatMsgID(args[2])
+        start_chat, start_id, _ = getChatMsgID(args[1])
+        end_chat, end_id, _ = getChatMsgID(args[2])
     except Exception as e:
         return await message.reply(f"❌ Error parsing links:\n{e}")
 
@@ -219,7 +232,56 @@ async def download_range(bot: Client, message: Message):
             await message.reply(f"❌ Error at {url}: {e}")
 
 
-@bot.on_message(filters.private & ~filters.command(["start", "help", "dl", "stats", "logs", "killall"]))
+@bot.on_message(filters.command("dltopic") & filters.private)
+async def download_topic(bot: Client, message: Message):
+    if len(message.command) < 2:
+        await message.reply("❌ Usage:\n`/dltopic <topic_message_link>`")
+        return
+
+    topic_url = message.command[1]
+
+    try:
+        chat_id, _, message_thread_id = getChatMsgID(topic_url)
+        if not message_thread_id:
+            await message.reply("❌ The provided link does not seem to be a topic link.")
+            return
+    except Exception as e:
+        await message.reply(f"❌ Error parsing link: {e}")
+        return
+
+    await message.reply(
+        f"📥 **Starting to download media from the topic. This might take a while...**"
+    )
+
+    media_count = 0
+    try:
+        # Use get_discussion_history for efficiency
+        async for msg in user.get_discussion_history(chat_id, message_thread_id):
+            if msg.media:
+                await handle_download(bot, message, msg.link)
+                media_count += 1
+                await asyncio.sleep(2)  # Avoid hitting rate limits
+    except Exception as e:
+        await message.reply(
+            f"❌ An error occurred while downloading from the topic: {e}"
+        )
+        LOGGER(__name__).error(e)
+        return
+
+    if media_count == 0:
+        await message.reply("✅ **Finished. No media found in this topic.**")
+    else:
+        await message.reply(
+            f"✅ **Finished! Downloaded {media_count} media items from the topic.**"
+        )
+
+
+@bot.on_message(
+    filters.private
+    & ~filters.command(
+        ["start", "help", "dl", "dltopic", "dlrange", "stats", "logs", "killall"]
+    )
+)
 async def handle_any_message(bot: Client, message: Message):
     if message.text and not message.text.startswith("/"):
         await track_task(handle_download(bot, message, message.text))
