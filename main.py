@@ -216,6 +216,8 @@ async def download_range(bot: Client, message: Message):
             await handle_download(bot, message, url)
             await asyncio.sleep(2)
         except Exception as e:
+            await message.reply(f"❌ Error at {url}: {e}")
+
 
 @bot.on_message(filters.command("dlgroup") & filters.private)
 async def download_group(bot: Client, message: Message):
@@ -387,7 +389,7 @@ async def download_group_range(bot: Client, message: Message):
         await message.reply(f"✅ **Completed! Downloaded {count} items**")
         
     except Exception as e:
-        await message.reply(f"❌ Error: {str(e)}")            await message.reply(f"❌ Error at {url}: {e}")
+        await message.reply(f"❌ Error: {str(e)}")
 
 
 @bot.on_message(filters.private & ~filters.command(["start", "help", "dl", "dlrange", "dlgroup", "dltopic", "scantopic", "dlgrouprange", "stats", "logs", "killall"]))
