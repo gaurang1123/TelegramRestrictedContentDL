@@ -110,7 +110,10 @@ def getChatMsgID(link: str):
     if not chat_id or not message_id:
         raise ValueError("Please send a valid Telegram post URL.")
 
-    return chat_id, message_id
+    if message_thread_id:
+        return chat_id, message_thread_id, message_id
+    else:
+        return chat_id, message_id
 
 async def cmd_exec(cmd, shell=False):
     if shell:
