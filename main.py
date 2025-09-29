@@ -216,10 +216,181 @@ async def download_range(bot: Client, message: Message):
             await handle_download(bot, message, url)
             await asyncio.sleep(2)
         except Exception as e:
-            await message.reply(f"❌ Error at {url}: {e}")
+
+@bot.on_message(filters.command("dlgroup") & filters.private)
+async def download_group(bot: Client, message: Message):
+    if len(message.command) < 2:
+        await message.reply("❌ Usage:\n`/dlgroup <group_link>`\n\nExample:\n`/dlgroup https://t.me/mychannel`")
+        return
+
+    group_link = message.command[1].rstrip('/')
+    
+    try:
+        if group_link.startswith("https://t.me/"):
+            chat_username = group_link.split("/")[-1]
+        else:
+            chat_username = group_link
+            
+        chat = await user.get_chat(chat_username)
+        await message.reply(f"📥 **Starting bulk download from {chat.title}...**")
+        
+        count = 0
+        async for msg in user.get_chat_history(chat.id):
+            if msg.media or msg.text:
+                try:
+                    url = f"https://t.me/{chat_username}/{msg.id}"
+                    await handle_download(bot, message, url)
+                    count += 1
+                    await asyncio.sleep(1)
+                except Exception as e:
+                    LOGGER(__name__).error(f"Error downloading {msg.id}: {e}")
+                    
+        await message.reply(f"✅ **Completed! Downloaded {count} items from {chat.title}**")
+        
+    except Exception as e:
+        await message.reply(f"❌ Error: {str(e)}")
 
 
-@bot.on_message(filters.private & ~filters.command(["start", "help", "dl", "stats", "logs", "killall"]))
+@bot.on_message(filters.command("dltopic") & filters.private)
+async def download_topic(bot: Client, message: Message):
+    if len(message.command) < 2:
+        await message.reply("❌ Usage:\n`/dltopic <topic_link>`\n\nExample:\n`/dltopic https://t.me/mychannel/123`")
+        return
+
+    topic_link = message.command[1]
+    
+    try:
+        chat_id, topic_id = getChatMsgID(topic_link)
+        chat = await user.get_chat(chat_id)
+        await message.reply(f"📥 **Starting topic download from {chat.title}...**")
+        
+        count = 0
+        message_ids = []
+        
+        # First, collect all message IDs in the topic
+        async for msg in user.get_chat_history(chat_id):
+            # Check if message belongs to the topic thread
+            if (msg.reply_to_message_id == topic_id or 
+                msg.id == topic_id or
+                (msg.reply_to_message and msg.reply_to_message.id == topic_id)):
+                message_ids.append(msg.id)
+        
+        # Sort message IDs to download in chronological order
+        message_ids.sort()
+        
+        # Download each message
+        for msg_id in message_ids:
+            try:
+                msg = await user.get_messages(chat_id, msg_id)
+                if msg.media or msg.text:
+                    # Generate proper URL based on chat type
+                    if str(chat_id).startswith('-100'):
+                        url = f"https://t.me/c/{str(chat_id)[4:]}/{msg_id}"
+                    elif hasattr(chat, 'username') and chat.username:
+                        url = f"https://t.me/{chat.username}/{msg_id}"
+                    else:
+                        url = f"https://t.me/c/{str(chat_id)[4:]}/{msg_id}"
+                    
+                    await handle_download(bot, message, url)
+                    count += 1
+                    await asyncio.sleep(1)
+            except Exception as e:
+                LOGGER(__name__).error(f"Error downloading message {msg_id}: {e}")
+                        
+        await message.reply(f"✅ **Completed! Downloaded {count} items from topic**")
+        
+    except Exception as e:
+        await message.reply(f"❌ Error: {str(e)}")
+
+
+@bot.on_message(filters.command("scantopic") & filters.private)
+async def scan_topic(bot: Client, message: Message):
+    if len(message.command) < 2:
+        await message.reply("❌ Usage:\n`/scantopic <topic_link>`\n\nExample:\n`/scantopic https://t.me/mychannel/123`")
+        return
+
+    topic_link = message.command[1]
+    
+    try:
+        chat_id, topic_id = getChatMsgID(topic_link)
+        chat = await user.get_chat(chat_id)
+        await message.reply(f"🔍 **Scanning topic in {chat.title}...**")
+        
+        message_ids = []
+        media_count = 0
+        text_count = 0
+        
+        # Collect all message IDs in the topic
+        async for msg in user.get_chat_history(chat_id):
+            if (msg.reply_to_message_id == topic_id or 
+                msg.id == topic_id or
+                (msg.reply_to_message and msg.reply_to_message.id == topic_id)):
+                message_ids.append(msg.id)
+                if msg.media:
+                    media_count += 1
+                elif msg.text:
+                    text_count += 1
+        
+        message_ids.sort()
+        
+        if message_ids:
+            ids_text = ", ".join(map(str, message_ids[:20]))  # Show first 20 IDs
+            if len(message_ids) > 20:
+                ids_text += f"... (+{len(message_ids) - 20} more)"
+            
+            scan_result = (
+                f"📊 **Topic Scan Results**\n\n"
+                f"**Total Messages:** {len(message_ids)}\n"
+                f"**Media Messages:** {media_count}\n"
+                f"**Text Messages:** {text_count}\n\n"
+                f"**Message IDs:** {ids_text}\n\n"
+                f"Use `/dltopic {topic_link}` to download all media from this topic."
+            )
+        else:
+            scan_result = "❌ **No messages found in this topic.**"
+            
+        await message.reply(scan_result)
+        
+    except Exception as e:
+        await message.reply(f"❌ Error: {str(e)}")
+
+
+@bot.on_message(filters.command("dlgrouprange") & filters.private)
+async def download_group_range(bot: Client, message: Message):
+    args = message.text.split()
+    
+    if len(args) != 4:
+        await message.reply("❌ Usage:\n`/dlgrouprange <group_link> <start_id> <end_id>`\n\nExample:\n`/dlgrouprange https://t.me/mychannel 100 200`")
+        return
+
+    group_link, start_id, end_id = args[1], int(args[2]), int(args[3])
+    
+    try:
+        if group_link.startswith("https://t.me/"):
+            chat_username = group_link.split("/")[-1]
+        else:
+            chat_username = group_link
+            
+        chat = await user.get_chat(chat_username)
+        await message.reply(f"📥 **Downloading from {chat.title} (ID {start_id} to {end_id})...**")
+        
+        count = 0
+        for msg_id in range(start_id, end_id + 1):
+            try:
+                url = f"https://t.me/{chat_username}/{msg_id}"
+                await handle_download(bot, message, url)
+                count += 1
+                await asyncio.sleep(1)
+            except Exception as e:
+                LOGGER(__name__).error(f"Error downloading {msg_id}: {e}")
+                
+        await message.reply(f"✅ **Completed! Downloaded {count} items**")
+        
+    except Exception as e:
+        await message.reply(f"❌ Error: {str(e)}")            await message.reply(f"❌ Error at {url}: {e}")
+
+
+@bot.on_message(filters.private & ~filters.command(["start", "help", "dl", "dlrange", "dlgroup", "dltopic", "scantopic", "dlgrouprange", "stats", "logs", "killall"]))
 async def handle_any_message(bot: Client, message: Message):
     if message.text and not message.text.startswith("/"):
         await track_task(handle_download(bot, message, message.text))
